@@ -102,7 +102,7 @@ msg_strip=	STRIP	$@
 cmd_strip=	$(STRIP) $(STRIPFLAGS) $(STRIPFLAGS-$(<F)) $< -o $@
 
 msg_contgen=	CONTGEN	$@
-cmd_contgen=	$(CONTGEN) 10 10 >$@
+cmd_contgen=	$(CONTGEN) 11 11 >$@
 
 msg_vendor=	VENDOR	$@
 cmd_vendor=	$(RM) -r $(@D) && $(GIT) clone $(GITFLAGS) $(@D) && $(TOUCH) $@

@@ -577,17 +577,30 @@ closure_function(5, 2, void, file_op_complete,
     closure_finish();
 }
 
-closure_function(8, 2, void, sendfile_bh,
-                 heap, h, fdesc, out, int *, offset, void *, buf, bytes, count, bytes, readlen, bytes, written, boolean, bh,
+closure_function(10, 2, void, sendfile_bh,
+                 heap, h, fdesc, in, fdesc, out, u64, savedflags, int *, offset, void *, buf, bytes, count, bytes, readlen, bytes, written, boolean, bh,
                  thread, t, sysreturn, rv)
 {
     thread_log(t, "%s: readlen %ld, written %ld, bh %d, rv %ld",
                __func__, bound(readlen), bound(written), bound(bh), rv);
 
+    if (rv <= 0) {
+        if (bound(bh) && rv == -EAGAIN) {
+            if (!bound(offset) && bound(in)->type == FDESC_TYPE_REGULAR) {
+                file f_in = (file)bound(in);
+                s64 rewind = bound(count) - bound(written);
+                assert(rewind >= 0);
+                f_in->offset -= rewind;
+            }
+            rv = bound(written);
+            thread_log(t, "%s: write would block, returning %ld",
+                       __func__, rv);
+        }
+        goto out_complete;
+    }
+
     /* !bh means read complete / initiating send */
     if (!bound(bh)) {
-        if (rv <= 0)
-            goto out_complete;
         bound(bh) = true;
         bound(readlen) = rv;
         if (bound(offset))
@@ -616,8 +629,12 @@ out_complete:
     set_syscall_return(t, rv);
     if (bound(bh))
         file_op_maybe_wake(t);
+    bound(out)->flags = bound(savedflags);
     closure_finish();
 }
+
+// XXX dirty hack
+#define SOCK_NONBLOCK 04000
 
 static sysreturn sendfile(int out_fd, int in_fd, int *offset, bytes count)
 {
@@ -629,9 +646,11 @@ static sysreturn sendfile(int out_fd, int in_fd, int *offset, bytes count)
 
     if (!infile->read || !outfile->write)
         return set_syscall_error(current, EINVAL);
-    
+
+    u64 outfile_saveflags = outfile->flags;
+    outfile->flags &= ~SOCK_NONBLOCK;
     void *buf = allocate(h, count);
-    io_completion read_complete = closure(h, sendfile_bh, h, outfile, offset, buf, count, 0, 0, false);
+    io_completion read_complete = closure(h, sendfile_bh, h, infile, outfile, outfile_saveflags, offset, buf, count, 0, 0, false);
     apply(infile->read, buf, count, offset ? *offset : infinity, current, false, read_complete);
     return sysreturn_value(current);
 }
